@@ -62,3 +62,16 @@ def view_balance(request, account_id):
 
     balance = get_balance(account)
     return Response({"balance": balance})
+
+@api_view(["GET"])
+def api_root(request):
+    return Response({
+        "service": "Double-Entry Ledger",
+        "description": "A double-entry ledger backend with concurrency-safe money transfers.",
+        "endpoints": {
+            "create_transfer": "POST /api/transfers/",
+            "create_deposit": "POST /api/deposits/",
+            "account_balance": "GET /api/accounts/<id>/balance/",
+        },
+        "source": "https://github.com/lwilson-dev/double-entry-ledger",
+    })
