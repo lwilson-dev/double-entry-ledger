@@ -1,69 +1,65 @@
 # Double-Entry Ledger
 
-A backend for moving money between accounts using double-entry accounting — the model real banks and accounting systems use. Every transaction is recorded as matching debit and credit entries, balances are calculated from those entries instead of being stored, and transfers hold up when two of them hit the same account at once.
+A backend for moving money between accounts using double-entry accounting, the same model banks and accounting systems use. Every transaction records matching debit and credit entries, account balances are calculated from those entries rather than stored, and transfers stay correct when two of them hit the same account at the same time.
 
-This is a simulated ledger for a portfolio project. Balances are fake and it's not wired to any real payment system.
+This is a simulated ledger built as a portfolio project. The balances are fake and it isn't connected to any real payment system.
 
-**Live demo:** https://double-entry-ledger-yhor.onrender.com
-(It's on a free tier, so the first request after it's been idle can take 30–60 seconds to wake up.)
-
----
+Live demo: https://double-entry-ledger-yhor.onrender.com (free tier, so the first request after it's been idle can take up to a minute to wake up)
 
 ## What it does
 
 - Transfer money between accounts
 - Deposit money into the ledger from a system account
-- Read an account's balance
+- Look up an account's balance
 
 Every money movement is a double-entry transaction, so the books always balance.
 
----
+## How it works
 
-## Design decisions
+### Double-entry
 
-The reasoning behind the main choices, since that's the part that matters more than the CRUD.
+Every transaction creates at least two entries, a debit and a credit, and they have to add up to zero for the transaction to go through. This is what keeps money from appearing out of nowhere. If one account loses $100, another account gains exactly $100. A transaction whose entries didn't sum to zero would mean something went wrong.
 
-### Double-entry so money can't appear from nowhere
-Every transaction creates at least two entries — a debit and a credit — and they have to sum to zero for the transaction to go through. That's what stops "magical amounts." Money can't be created or destroyed, only moved: if Alice loses $100, another account gains exactly $100. A transaction that didn't sum to zero would mean something leaked.
+Entries live in their own table instead of being `from_account` and `to_account` columns on the transaction. Two columns can only describe a two-sided transfer, but a real transaction isn't always two-sided. A $100 payment with a $3 fee is three entries (-100, +97, +3) that still add up to zero, and separate entries handle that fine.
 
-This is also why entries are their own table instead of `from_account`/`to_account` columns on the transaction. Two columns only handle a two-sided transfer. Separate entries handle any number of sides — a $100 payment with a $3 fee is three entries (−100, +97, +3) that still sum to zero.
+### Calculated balances
 
-### Balance is calculated, not stored
-An account's balance is the sum of its entries (credits minus debits), not a saved column. If it were a stored number, every transfer would have to update it, and two transfers running at once could update it wrong. Calculating it from the entries means there's no stored number to get corrupted — the balance is always whatever the entries add up to.
+An account's balance is the sum of its entries (credits minus debits) rather than a saved column. A stored balance would have to be updated on every transfer, and two transfers running at once could update it incorrectly. Calculating it from the entries means there's no saved number to get out of sync.
 
-### Handling concurrent transfers
-The problem: two transfers on the same account at the same time can both read the balance before either one saves, both pass the "enough funds?" check, and both go through — leaving the account overdrawn. Two things prevent that:
+### Concurrent transfers
 
-- `transaction.atomic()` wraps the whole transfer so it either fully commits or fully rolls back. No half-finished transfers.
-- `select_for_update()` locks the account rows when they're read, so a second transfer has to wait for the first to finish, then reads the updated balance and fails correctly.
+Two transfers on the same account at the same time can both read the balance before either one finishes, both decide there's enough money, and both go through, leaving the account overdrawn. Two things stop that:
 
-The funds check runs *after* the lock, so it reads the locked row. Running it before the lock would let the balance change underneath it — the lock is the thing that stops that.
+- `transaction.atomic()` wraps the whole transfer so it either fully commits or fully rolls back. A transfer can't be left half done.
+- `select_for_update()` locks the account rows when they're read, so the second transfer waits for the first to finish, then reads the updated balance and correctly fails.
 
-### Locking accounts in id order
-If two transfers locked the same two accounts in the opposite order, they'd each hold one and wait on the other forever — a deadlock. Locking accounts in a fixed order (sorted by id) means every transfer grabs locks in the same order, so that can't happen.
+The funds check runs after the lock, so it reads the locked row. If it ran before the lock, the balance could change underneath it.
 
-### Idempotency keys
-Each transaction can carry a client-supplied key. If a transaction with that key already exists — say the client's connection dropped and it retried — the existing one is returned instead of running the transfer a second time. So a retry can't double-charge.
+### Avoiding deadlocks
 
-### Decimal, not float
-Money uses `Decimal`. Floats can't hold values like 0.1 exactly, so amounts would drift off from what an account actually has or sends. Decimal keeps the math exact, which matters a lot when the whole point is that entries sum to exactly zero.
+If two transfers locked the same two accounts in opposite orders, each would hold one lock and wait forever on the other. Locking accounts in a fixed order (by id) means every transfer takes its locks in the same order, so that can't happen.
 
-### How money gets in
-Money has to enter a closed system from somewhere. A system account is that source — a deposit moves money from it into a user account. The system account is allowed to go negative, since its negative balance is just a running total of how much money is in circulation.
+### Idempotency
 
----
+A transaction can include a key supplied by the client. If a transaction with that key already exists, say because a dropped connection made the client retry, the existing transaction is returned instead of running the transfer again. A retry can't double-charge.
+
+### Decimal instead of float
+
+Money uses `Decimal`. Floats can't store values like 0.1 exactly, so amounts would drift away from what an account actually holds. Decimal keeps the arithmetic exact, which matters when the whole thing depends on entries summing to exactly zero.
+
+### Getting money in
+
+Money has to come from somewhere in a closed system. A system account is the source: a deposit moves money from it into a user account. The system account is allowed to go negative, because its negative balance is just a running total of how much money is in circulation.
 
 ## Tech stack
 
-- **Django** — models, migrations, admin, ORM
-- **Django REST Framework** — the API
-- **PostgreSQL** — the database. It's Postgres and not SQLite because the row-level locking (`SELECT FOR UPDATE`) that makes concurrent transfers safe needs it.
-- **Gunicorn + WhiteNoise** — production server and static files
-- **Render + Neon** — Render runs the app, Neon hosts the database
+- Django for models, migrations, admin, and the ORM
+- Django REST Framework for the API
+- PostgreSQL for the database (the row-level locking that makes transfers safe needs it, which is why not SQLite)
+- Gunicorn and WhiteNoise for serving in production
+- Render for hosting, Neon for the managed PostgreSQL database
 
-The business logic sits in a service layer (`ledger/services.py`) separate from the API views, so it can be tested and reused without going through HTTP.
-
----
+The business logic lives in a service layer (`ledger/services.py`) kept separate from the API views, so it can be tested and reused without going through HTTP.
 
 ## API
 
@@ -87,46 +83,37 @@ Content-Type: application/json
 }
 ```
 
-Success returns `201`. Bad requests — not enough funds, bad amount, account that doesn't exist — return `400`. A balance lookup on a missing account returns `404`.
-
----
+A successful transfer returns `201`. Bad requests like insufficient funds, a bad amount, or an account that doesn't exist return `400`. A balance lookup on a missing account returns `404`.
 
 ## Tests
 
-There's a concurrency test that fires two transfers at the same account at the same time when it only has enough for one, and checks that exactly one goes through and the balance never drops below zero. Take out the row lock and the test fails (both go through, balance goes negative), which is the proof that the lock is what's holding the line.
+There's a concurrency test that fires two transfers at the same account at the same time when it only has enough for one, and checks that exactly one goes through and the balance never drops below zero. If you take out the row lock, the test fails (both go through and the balance goes negative), which shows the lock is what's preventing the overdraw.
 
 ```bash
 python manage.py test ledger
 ```
 
----
-
 ## Running it locally
 
-Needs Python 3.12+ and Docker (for Postgres).
+You'll need Python 3.12+ and Docker (for PostgreSQL).
 
 ```bash
-# clone and enter
 git clone https://github.com/lwilson-dev/double-entry-ledger.git
 cd double-entry-ledger
 
-# virtual environment
 python3 -m venv .venv
 source .venv/bin/activate
 
-# dependencies
 pip install -r requirements.txt
 
-# start postgres
 docker compose up -d
 
-# make a .env file in the project root with:
+# create a .env file in the project root with:
 #   SECRET_KEY=your-secret-key
 #   DB_PASSWORD=ledgerpass
 #   DEBUG=True
 #   ALLOWED_HOSTS=127.0.0.1,localhost
 
-# migrate
 python manage.py migrate
 
 # create the system account (money enters the ledger from here)
@@ -134,17 +121,14 @@ python manage.py shell
 #   >>> from ledger.models import Account
 #   >>> Account.objects.create(type="system", name="System")
 
-# run
 python manage.py runserver
 ```
 
-API lives at `http://127.0.0.1:8000/api/`.
+The API runs at `http://127.0.0.1:8000/api/`.
 
----
+## What I'd add next
 
-## Things I'd add next
-
-- A database-level constraint to guarantee only one system account exists
-- Balance snapshots so reads don't have to sum the whole entry history as it grows
-- Auth on the API, with per-account permissions
-- Pull the shared entry-creation code into one helper
+- A database constraint to guarantee only one system account can exist
+- Balance snapshots so reads don't sum the whole entry history as it grows
+- Authentication on the API, with per-account permissions
+- A shared helper for the entry-creation code
