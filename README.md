@@ -55,7 +55,7 @@ Money has to come from somewhere in a closed system. A system account is the sou
 
 - Django for models, migrations, admin, and the ORM
 - Django REST Framework for the API
-- PostgreSQL for the database (the row-level locking that makes transfers safe needs it, which is why not SQLite)
+- PostgreSQL for the database
 - Gunicorn and WhiteNoise for serving in production
 - Render for hosting, Neon for the managed PostgreSQL database
 
@@ -125,10 +125,3 @@ python manage.py runserver
 ```
 
 The API runs at `http://127.0.0.1:8000/api/`.
-
-## What I'd add next
-
-- A database constraint to guarantee only one system account can exist
-- Balance snapshots so reads don't sum the whole entry history as it grows
-- Authentication on the API, with per-account permissions
-- A shared helper for the entry-creation code
