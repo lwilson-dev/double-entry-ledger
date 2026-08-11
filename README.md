@@ -49,7 +49,7 @@ Money uses `Decimal`. Floats can't store values like 0.1 exactly, so amounts wou
 
 ### Getting money in
 
-Money has to come from somewhere in a closed system. A system account is the source: a deposit moves money from it into a user account. The system account is allowed to go negative, because its negative balance is just a running total of how much money is in circulation. It mirrors the users: if the users hold $150 between them, the system account sits at -$150, so adding up every account in the ledger always comes out to zero.
+Money has to come from somewhere in a closed system. A system account is the source. A deposit moves money out of it and into a user account, so the system account drops lower the more it hands out. That negative balance isn't a problem. It just tracks how much money is out in user accounts. If the users hold $150 between them, the system account sits at -$150, and the two cancel out to zero.
 
 ## Tech stack
 
